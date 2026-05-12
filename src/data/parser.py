@@ -109,13 +109,13 @@ def PBP_parser(filepath):
                         })
 
         # flat structure for training
-        for pred_id, frame in preds.items():
+        for pred_idx, pred_id in preds.items():
             labels = []
             for r in rows:
                 form = r[1]
                 role_str = r[9]
                 label = "O"
-                if str(pred_id) == r[0]:
+                if str(pred_idx) == r[0]:
                     label = "PRED"
                 
                 elif role_str != "_":    
@@ -126,7 +126,7 @@ def PBP_parser(filepath):
 
                         role_name, linked_pred = part.split(":")
 
-                        if int(linked_pred) == pred_id:
+                        if int(linked_pred) == pred_idx:
                             label = role_name.upper()
                             break
                             
@@ -135,7 +135,10 @@ def PBP_parser(filepath):
             flat_instances.append({
                 "sentence_id": meta.get("sent_id"),
                 "text": meta.get("text"),
-                "predicate_id": frame,
+                "predicate_index": pred_idx-1, # adjust to 0-based index
+                "predicate_token": tokens[pred_idx - 1],
+                "predicate_lemma": preds[pred_idx].split(".")[0],
+                "predicate_frame": pred_id,
                 "tokens": tokens,
                 "labels": labels
             })
