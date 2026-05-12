@@ -1,4 +1,9 @@
 def PBP_parser(filepath):
+    """
+    Parse the Porttinari-base Propbank (https://sites.google.com/icmc.usp.br/poetisa/porttinari-base-propbank) file and return a list of sentences. Each sentence is represented as a dictionary with two keys:
+        - "meta": a dictionary containing the metadata of the sentence (e.g., sent_id, text)
+        - "rows": a list of lists, where each inner list corresponds to a token and contains the columns of the PBP format (ID, FORM, LEMMA, UPOS, XPOS, FEATS, HEAD, DEPREL, PRED, ROLE)
+    """
     sentences = []
     current_tokens = []
     

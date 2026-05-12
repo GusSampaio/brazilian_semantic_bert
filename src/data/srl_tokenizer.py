@@ -16,6 +16,7 @@ class SRLTokenizer:
         self,
         model_name,
         label2id,
+        using_special_tokens=True,
         max_length=512,
         padding="max_length",
         truncation=True,
@@ -30,6 +31,14 @@ class SRLTokenizer:
             use_fast=True,
         )
 
+        if using_special_tokens:
+            self.tokenizer.add_special_tokens({
+                "additional_special_tokens": [
+                    "<PRED>",
+                    "</PRED>"
+                ]
+            })
+
         self.label2id = label2id
         self.id2label = {
             v: k for k, v in label2id.items()
@@ -41,7 +50,7 @@ class SRLTokenizer:
 
         tokens = instance["model_tokens"]
 
-        labels = instance["labels"]
+        labels = instance["model_labels"]
 
         predicate_indicator = instance["predicate_indicator"]
 
@@ -72,10 +81,15 @@ class SRLTokenizer:
 
             # First subtoken of a word
             elif word_id != previous_word_id:
+                
+                current_label = labels[word_id]
 
-                aligned_labels.append(
-                    self.label2id[labels[word_id]]
-                )
+                if current_label == -100:
+                    aligned_labels.append(-100)
+                else:
+                    aligned_labels.append(
+                        self.label2id[current_label]
+                    )
 
                 aligned_predicate_indicator.append(
                     predicate_indicator[word_id]
