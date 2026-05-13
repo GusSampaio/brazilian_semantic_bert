@@ -49,9 +49,7 @@ class SRLTokenizer:
     def tokenize_and_align(self, instance):
 
         tokens = instance["model_tokens"]
-
         labels = instance["model_labels"]
-
         predicate_indicator = instance["predicate_indicator"]
 
         tokenized = self.tokenizer(
@@ -65,7 +63,6 @@ class SRLTokenizer:
         word_ids = tokenized.word_ids()
 
         aligned_labels = []
-
         aligned_predicate_indicator = []
 
         previous_word_id = None
@@ -74,14 +71,11 @@ class SRLTokenizer:
 
             # Special tokens like [CLS], [SEP]
             if word_id is None:
-
                 aligned_labels.append(-100)
-
                 aligned_predicate_indicator.append(0)
 
             # First subtoken of a word
             elif word_id != previous_word_id:
-                
                 current_label = labels[word_id]
 
                 if current_label == -100:
@@ -97,9 +91,7 @@ class SRLTokenizer:
 
             # Remaining subtokens
             else:
-
                 aligned_labels.append(-100)
-
                 aligned_predicate_indicator.append(
                     predicate_indicator[word_id]
                 )
