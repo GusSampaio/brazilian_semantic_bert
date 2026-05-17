@@ -1,15 +1,14 @@
 import torch
-from data.data_module import SRLDataModule
+from data.srl_data_module import SRLDataModule
 from models.srl_model import SRLModel
 
-module = SRLDataModule(save_data=True, save_data_path="data/processed/data_splits")
-# module = SRLDataModule(use_preprocessed_data=True, preprocess_data_path="preprocessed_data")
+module = SRLDataModule(save_data=True, data_path="data/processed/")
+
+# If you already preprocessed data, you can use:
+# module = SRLDataModule(use_preprocessed_data=True, data_path="data/processed/")
 
 train_set = module.get_split("train")
 print(f"Texto tokenizado: {module.tokenizer.convert_ids_to_tokens(train_set[0]['input_ids'])}\n")
-# for example in train_set:
-#     print(example)
-#     break
 
 train_loader = module.get_dataloader(train_set, batch_size=32)
 
