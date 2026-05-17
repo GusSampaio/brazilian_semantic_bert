@@ -104,12 +104,6 @@ class SRLTokenizer:
             aligned_predicate_indicator
         )
 
-        # pad labels and predicate indicatores if necessary
-        if self.padding == "max_length":
-            pad_size = len(tokenized["input_ids"]) - len(aligned_labels)
-            aligned_labels.extend([-100] * pad_size)
-            aligned_predicate_indicator.extend([0] * pad_size)
-
         return tokenized
     
     def decode(self, token_ids):

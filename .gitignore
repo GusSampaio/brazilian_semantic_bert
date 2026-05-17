@@ -4,3 +4,5 @@ __pycache__/
 *.conllu
 
 todo
+
+src/data/preprocessed_data/

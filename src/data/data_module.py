@@ -1,16 +1,22 @@
 from datasets import Dataset, DatasetDict
+from torch.utils.data import DataLoader
 
-from parser import PBP_parser
-from instance_builder import SRLInstanceBuilder
-from srl_tokenizer import SRLTokenizer
-from splitter import SRLSplitter
+from data.conllu_parser import PBP_parser
+from data.instance_builder import SRLInstanceBuilder
+from data.splitter import SRLSplitter
 
+from features.srl_tokenizer import SRLTokenizer
 
 class SRLDataModule:
 
     def __init__(
         self,
-        dataset_path="PBP-classic-complete.conllu",
+        preprocess_data_path=None,
+        use_preprocessed_data=False,
+        preprocessed_data_path=None,
+        save_data=False,
+        save_data_path="data/processed/",
+        dataset_path="data/raw/PBP-classic-complete.conllu",
         model_name="neuralmind/bert-base-portuguese-cased",
         predicate_signal="special_token",
         max_length=256,
@@ -21,6 +27,8 @@ class SRLDataModule:
         test_ratio=0.1,
         seed=42,
     ):
+        self.use_preprocessed_data = use_preprocessed_data
+        self.preprocess_data_path = preprocess_data_path
         self.dataset_path = dataset_path
 
         self.model_name = model_name
@@ -39,18 +47,24 @@ class SRLDataModule:
         self.label2id = None
         self.id2label = None
 
-        self.builder = SRLInstanceBuilder(
-            predicate_signal=self.predicate_signal
-        )
+        if self.use_preprocessed_data and self.preprocess_data_path is not None:
+            self.datasets = DatasetDict.load_from_disk(self.preprocess_data_path)
+        else:
+            self.builder = SRLInstanceBuilder(
+                predicate_signal=self.predicate_signal
+            )
+            
+            self.splitter = SRLSplitter(
+                train_ratio=self.train_ratio,
+                dev_ratio=self.dev_ratio,
+                test_ratio=self.test_ratio,
+                seed=self.seed,
+            )
 
-        self.splitter = SRLSplitter(
-            train_ratio=self.train_ratio,
-            dev_ratio=self.dev_ratio,
-            test_ratio=self.test_ratio,
-            seed=self.seed,
-        )
+            self.datasets = self.prepare_data(self.dataset_path)
 
-        self.datasets = self.prepare_data(self.dataset_path)
+            if save_data and save_data_path is not None:
+                self.datasets.save_to_disk(save_data_path)
 
     def build_label_vocab(self, instances):
 
@@ -101,14 +115,24 @@ class SRLDataModule:
 
         train_tokenized = self._tokenize_split(train_instances)
         dev_tokenized = self._tokenize_split(dev_instances)
-        test_tokenized = self._tokenize_split(test_instances)
-
+        test_tokenized = self._tokenize_split(test_instances) 
 
         hf_datasets = DatasetDict({
             "train": Dataset.from_list(train_tokenized),
             "validation": Dataset.from_list(dev_tokenized),
             "test": Dataset.from_list(test_tokenized),
         })
+
+        hf_datasets.set_format(
+            type="torch",
+            columns=[
+                "input_ids",
+                "token_type_ids",
+                "attention_mask",
+                "labels",
+                "predicate_indicator",
+            ]
+        )
 
         return hf_datasets
     
@@ -118,5 +142,21 @@ class SRLDataModule:
             for inst in instances
         ]
 
-    def get_dataset(self, split="train"):
+    def get_split(self, split="train"):
         return self.datasets[split]
+    
+    def get_dataloader(
+        self,
+        dataset,
+        batch_size=2,
+        shuffle=False,
+    ):
+        """
+        Creates a PyTorch DataLoader from a HuggingFace dataset.
+        """
+
+        return DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+        )
