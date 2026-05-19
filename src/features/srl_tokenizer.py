@@ -55,7 +55,6 @@ class SRLTokenizer:
         tokenized = self.tokenizer(
             tokens,
             is_split_into_words=True,
-            padding=self.padding,
             truncation=self.truncation,
             max_length=self.max_length,
         )
