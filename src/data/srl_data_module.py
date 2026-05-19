@@ -20,7 +20,6 @@ class SRLDataModule:
         model_name="neuralmind/bert-base-portuguese-cased",
         predicate_signal="special_token",
         max_length=256,
-        padding="max_length",
         truncation=True,
         train_ratio=0.8,
         dev_ratio=0.1,
@@ -36,7 +35,6 @@ class SRLDataModule:
         self.predicate_signal = predicate_signal
 
         self.max_length = max_length
-        self.padding = padding
         self.truncation = truncation
 
         self.train_ratio = train_ratio
@@ -92,7 +90,6 @@ class SRLDataModule:
             model_name=self.model_name,
             label2id=self.label2id,
             max_length=self.max_length,
-            padding=self.padding,
             truncation=self.truncation,
             using_special_tokens=(self.predicate_signal == "special_token"),
         )

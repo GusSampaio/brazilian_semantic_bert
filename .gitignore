@@ -8,3 +8,4 @@ todo
 data/
 artifacts/
 notebooks/
+.hf_cache

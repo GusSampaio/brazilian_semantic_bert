@@ -1,4 +1,6 @@
 import os
+os.environ["HF_HOME"] = "/app/.hf_cache"
+
 import torch
 from transformers import (
     AutoModelForTokenClassification,
@@ -10,12 +12,12 @@ from transformers import (
 from data.srl_data_module import SRLDataModule
 from training.metrics import SRLMetrics
 
-def main():
+def main(model_name, num_epochs, batch_size):
     data_module = SRLDataModule(
         raw_dataset_path="data/raw/PBP-classic-complete.conllu",
         data_path="../data/processed/",
         use_preprocessed_data=True,
-        model_name="neuralmind/bert-base-portuguese-cased",
+        model_name=model_name,
         predicate_signal="special_token",
     )
     
@@ -38,20 +40,27 @@ def main():
     )
 
     metrics_calculator = SRLMetrics(id2label=data_module.id2label)
-
+    
+    output_path = f"artifacts/{model_name}"
     training_args = TrainingArguments(
-        output_dir="artifacts/srl_model_checkpoints",
+        output_dir=f"{output_path}/checkpoints",
         evaluation_strategy="epoch",
         save_strategy="epoch",
-        learning_rate=3e-5,
-        per_device_train_batch_size=128,
-        per_device_eval_batch_size=128,
-        num_train_epochs=5,
-        weight_decay=0.01,
-        logging_steps=50,
+
+        save_total_limit=1,
         load_best_model_at_end=True,
         metric_for_best_model="f1",
+        greater_is_better=True,
+
         fp16=torch.cuda.is_available(), # Use of mixed precision if using GPU
+        per_device_train_batch_size=batch_size,
+        per_device_eval_batch_size=batch_size,
+        dataloader_num_workers=4,
+        
+        learning_rate=3e-5,
+        num_train_epochs=num_epochs,
+        weight_decay=0.01,
+        logging_steps=50,
     )
 
     trainer = Trainer(
@@ -66,10 +75,14 @@ def main():
 
     print("Starting training...")
     trainer.train()
-
-    print("Saving best model at artifacts/srl_final_model...")
-    trainer.save_model("artifacts/srl_final_model")
-    print("End of training!")
+    
+    trainer.save_model(f"{output_path}/final_model")
+    print(f"End of training! Saved at {output_path}/final_model")
 
 if __name__ == "__main__":
-    main()
+    # model_name = "neuralmind/bert-base-portuguese-cased"
+    # model_name = "neuralmind/bert-large-portuguese-cased"
+    # model_name = "xlm-roberta-base"
+    # model_name = "xlm-roberta-large"
+    model_name = "bert-base-multilingual-cased"
+    main(model_name, num_epochs=1, batch_size=64)

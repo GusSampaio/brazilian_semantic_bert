@@ -18,11 +18,8 @@ class SRLTokenizer:
         label2id,
         using_special_tokens=True,
         max_length=512,
-        padding="max_length",
         truncation=True,
     ):  
-
-        self.padding = padding
         self.truncation = truncation
         self.max_length = max_length
 
