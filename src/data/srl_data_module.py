@@ -79,7 +79,6 @@ class SRLDataModule:
                     json.dump(self.id2label, f)
 
     def get_labels_and_ids(self):
-
         label_and_ids_path = os.path.join(self.data_path, "labels_and_ids/")
         
         with open(label_and_ids_path + 'label2id.json', 'r') as file:
