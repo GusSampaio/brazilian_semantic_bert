@@ -30,8 +30,8 @@ class SRLSplitter:
 
     def split(self, dataset):
         
-        unique_sentences = list(
-            set(inst["sentence_id"] for inst in dataset)
+        unique_sentences = sorted(
+            list(set(inst["sentence_id"] for inst in dataset))
         )
 
         rng = random.Random(self.seed)
