@@ -112,7 +112,6 @@ def main(model_name, num_epochs, batch_size):
 if __name__ == "__main__":
     model_name, model_size = define_model()
     cfg_path = f"src/configs/{model_name}.json"
-    cfg = load_configs(cfg_path)
-    cfg = cfg[model_size]
+    cfg = load_configs(cfg_path, model_size)
 
     main(cfg["model_name"], num_epochs=50, batch_size=256)
