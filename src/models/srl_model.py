@@ -1,7 +1,6 @@
 import torch
 from transformers import AutoModelForTokenClassification
 
-
 class SRLModel:
 
     def __init__(

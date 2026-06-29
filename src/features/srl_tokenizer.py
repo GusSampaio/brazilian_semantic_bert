@@ -44,7 +44,6 @@ class SRLTokenizer:
         self.max_length = max_length
 
     def tokenize_and_align(self, instance):
-
         tokens = instance["model_tokens"]
         labels = instance["model_labels"]
         predicate_indicator = instance["predicate_indicator"]

@@ -3,22 +3,22 @@ from torch.utils.data import DataLoader
 import os
 import json
 
-from data.conllu_parser import PBP_parser
-from data.instance_builder import SRLInstanceBuilder
-from data.splitter import SRLSplitter
+from src.data.conllu_parser import PBP_parser
+from src.data.instance_builder import SRLInstanceBuilder
+from src.data.splitter import SRLSplitter
 
-from features.srl_tokenizer import SRLTokenizer
+from src.features.srl_tokenizer import SRLTokenizer
 
 class SRLDataModule:
 
     def __init__(
         self,
-        use_preprocessed_data=False,
-        save_data=False,
-        data_path="data/processed/",
-        raw_dataset_path="data/raw/PBP-classic-complete.conllu",
-        model_name="neuralmind/bert-base-portuguese-cased",
-        predicate_signal="special_token",
+        use_preprocessed_data=None,
+        save_data=None,
+        data_path=None,
+        raw_dataset_path=None,
+        model_name=None,
+        predicate_signal=None,
         max_length=256,
         truncation=True,
         train_ratio=0.8,
