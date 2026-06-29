@@ -1,10 +1,11 @@
 import numpy as np
-from sklearn.metrics import f1_score, precision_score, recall_score
+from sklearn.metrics import f1_score, precision_score, recall_score, classification_report
+
 
 class SRLMetrics:
-    def __init__(self, id2label):
+    def __init__(self, id2label, eval_mode=False):
         self.id2label = id2label
-
+        self.eval_mode = eval_mode
     def _safe_get_label(self, idx):
         """
         Ensure that the index will be found, whether it is np.int64, int, or string.
@@ -32,15 +33,27 @@ class SRLMetrics:
         flat_true = [item for sublist in true_labels for item in sublist]
         flat_pred = [item for sublist in true_predictions for item in sublist]
 
+
         # Calculating macro metrics ignoring "O" class
-        labels_to_evaluate = list(set(flat_true) - {"O"})
+        labels_to_evaluate = list(set(flat_true) - {"O"} - {"PRED"})
 
-        precision = precision_score(flat_true, flat_pred, labels=labels_to_evaluate, average="macro", zero_division=0)
-        recall = recall_score(flat_true, flat_pred, labels=labels_to_evaluate, average="macro", zero_division=0)
-        f1 = f1_score(flat_true, flat_pred, labels=labels_to_evaluate, average="macro", zero_division=0)
+        if self.eval_mode:
+            report = classification_report(
+                flat_true,
+                flat_pred,
+                labels=labels_to_evaluate,
+                output_dict=True,
+                zero_division=0
+            )
 
-        return {
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-        }
+        metrics ={}
+        metrics["precision"] = precision_score(flat_true, flat_pred, labels=labels_to_evaluate, average="macro", zero_division=0)
+        metrics["recall"] = recall_score(flat_true, flat_pred, labels=labels_to_evaluate, average="macro", zero_division=0)
+        metrics["f1"] = f1_score(flat_true, flat_pred, labels=labels_to_evaluate, average="macro", zero_division=0)
+
+        if self.eval_mode:
+            for role in labels_to_evaluate:
+                if role in report:
+                    metrics[f"f1_{role}"] = report[role]["f1-score"]
+
+        return metrics
