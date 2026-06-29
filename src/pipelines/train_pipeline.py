@@ -42,7 +42,7 @@ def main(model_name, num_epochs, batch_size):
     data_module = SRLDataModule(
         data_path="data/processed/",
         use_preprocessed_data=True,
-        model_name=model_path,
+        model_name=model_name,
         predicate_signal="special_token",
     )
     
@@ -97,7 +97,7 @@ def main(model_name, num_epochs, batch_size):
         tokenizer=data_module.tokenizer.tokenizer,
         data_collator=data_collator,
         compute_metrics=metrics_calculator.compute_metrics, 
-        callbacks=TextLoggerCallback(log_file_path)
+        callbacks=[TextLoggerCallback(log_file_path)]
     )
 
     print("Starting training...")
