@@ -1,0 +1,6 @@
+{
+    "base":
+    {
+        "model_name":"bert-base-multilingual-cased"
+    }
+}

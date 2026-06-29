@@ -1,23 +1,48 @@
 import os
 os.environ["HF_HOME"] = "/app/.hf_cache"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import torch
 from transformers import (
     AutoModelForTokenClassification,
     TrainingArguments,
     Trainer,
-    DataCollatorForTokenClassification
+    DataCollatorForTokenClassification,
+    TrainerCallback
 )
 
-from data.srl_data_module import SRLDataModule
-from training.metrics import SRLMetrics
+from src.data.srl_data_module import SRLDataModule
+from src.training.metrics import SRLMetrics
+from src.utils.json_loader import load_configs
+from src.utils.input_reader import define_model
+
+class TextLoggerCallback(TrainerCallback):
+    def __init__(self, log_path):
+        self.log_path = log_path
+        
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(self.log_path, "w", encoding="utf-8") as f:
+            f.write("==================================================\n")
+            f.write("          LOGS DE TREINAMENTO DO MODELO            \n")
+            f.write("==================================================\n\n")
+
+    def on_log(self, args, state, control, logs=None, **kwargs):    
+        """Disparado toda vez que o modelo loga perda ou métricas de validação"""
+        if logs:
+            with open(self.log_path, "a", encoding="utf-8") as f:
+                # Formata a época e o passo atual de forma limpa
+                prefixo = f"[Época {state.epoch:.2f} / Passo {state.global_step}] "
+                
+                # Converte o dicionário de métricas para uma string legível
+                metricas_str = " | ".join([f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}" for k, v in logs.items()])
+                
+                f.write(prefixo + metricas_str + "\n")
 
 def main(model_name, num_epochs, batch_size):
     data_module = SRLDataModule(
-        raw_dataset_path="data/raw/PBP-classic-complete.conllu",
-        data_path="../data/processed/",
+        data_path="data/processed/",
         use_preprocessed_data=True,
-        model_name=model_name,
+        model_name=model_path,
         predicate_signal="special_token",
     )
     
@@ -42,9 +67,10 @@ def main(model_name, num_epochs, batch_size):
     metrics_calculator = SRLMetrics(id2label=data_module.id2label)
     
     output_path = f"artifacts/{model_name}"
+    log_file_path = f"{output_path}/training_logs.txt"
     training_args = TrainingArguments(
         output_dir=f"{output_path}/checkpoints",
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
 
         save_total_limit=1,
@@ -70,19 +96,23 @@ def main(model_name, num_epochs, batch_size):
         eval_dataset=dev_dataset,
         tokenizer=data_module.tokenizer.tokenizer,
         data_collator=data_collator,
-        compute_metrics=metrics_calculator.compute_metrics
+        compute_metrics=metrics_calculator.compute_metrics, 
+        callbacks=TextLoggerCallback(log_file_path)
     )
 
     print("Starting training...")
     trainer.train()
-    
     trainer.save_model(f"{output_path}/final_model")
     print(f"End of training! Saved at {output_path}/final_model")
+    print(f"Logs saved at: {log_file_path}")
+
+    metrics = trainer.evaluate(dev_dataset)
+    print(metrics)
 
 if __name__ == "__main__":
-    # model_name = "neuralmind/bert-base-portuguese-cased"
-    # model_name = "neuralmind/bert-large-portuguese-cased"
-    # model_name = "xlm-roberta-base"
-    # model_name = "xlm-roberta-large"
-    model_name = "bert-base-multilingual-cased"
-    main(model_name, num_epochs=1, batch_size=64)
+    model_name, model_size = define_model()
+    cfg_path = f"src/configs/{model_name}.json"
+    cfg = load_configs(cfg_path)
+    cfg = cfg[model_size]
+
+    main(cfg["model_name"], num_epochs=50, batch_size=256)

@@ -1,0 +1,9 @@
+{
+    "base":
+    {
+        "model_name":"xlm-roberta-base"
+    },
+    "large":{
+        "model_name":"xlm-roberta-large"
+    }
+}

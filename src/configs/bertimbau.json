@@ -1,0 +1,10 @@
+{
+    "base":
+    {
+        "model_name":"neuralmind/bert-base-portuguese-cased"
+    },
+    "large":
+    {
+        "model_name":"neuralmind/bert-large-portuguese-cased"
+    }
+}
