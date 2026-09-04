@@ -1,4 +1,6 @@
 from transformers import AutoTokenizer
+from tokenizers.pre_tokenizers import ByteLevel as ByteLevelPreTokenizer
+from tokenizers.decoders import ByteLevel as ByteLevelDecoder
 
 class SRLTokenizer:
     """
@@ -17,16 +19,18 @@ class SRLTokenizer:
         model_name,
         label2id,
         using_special_tokens=True,
-        max_length=512,
+        max_length=512, # why truncate here?
         truncation=True,
     ):  
         self.truncation = truncation
         self.max_length = max_length
-
+        
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             use_fast=True,
         )
+        
+        self._fix_byte_level_prefix_space()
 
         if using_special_tokens:
             self.tokenizer.add_special_tokens({
@@ -43,6 +47,18 @@ class SRLTokenizer:
 
         self.max_length = max_length
 
+    def _fix_byte_level_prefix_space(self):
+        """
+        Fixes the prefix space issue for ByteLevel tokenizers.
+        This is necessary because the tokenizer may not add a prefix space
+        to the first token of a sentence, which can lead to incorrect tokenization.
+        """
+        if isinstance(self.tokenizer.backend_tokenizer.pre_tokenizer, ByteLevelPreTokenizer):
+            self.tokenizer.backend_tokenizer.pre_tokenizer = ByteLevelPreTokenizer(add_prefix_space=True)
+
+        if isinstance(self.tokenizer.backend_tokenizer.decoder, ByteLevelDecoder):
+            self.tokenizer.backend_tokenizer.decoder = ByteLevelDecoder()
+
     def tokenize_and_align(self, instance):
         tokens = instance["model_tokens"]
         labels = instance["model_labels"]
@@ -53,6 +69,7 @@ class SRLTokenizer:
             is_split_into_words=True,
             truncation=self.truncation,
             max_length=self.max_length,
+            spaces_between_special_tokens=True,
         )
 
         word_ids = tokenized.word_ids()
@@ -73,11 +90,11 @@ class SRLTokenizer:
             elif word_id != previous_word_id:
                 current_label = labels[word_id]
 
-                if current_label == -100:
+                if tokens[word_id] in ["<PRED>", "</PRED>"] or current_label == -100:
                     aligned_labels.append(-100)
                 else:
                     aligned_labels.append(
-                        self.label2id[current_label]
+                        self.label2id.get(current_label, -100)
                     )
 
                 aligned_predicate_indicator.append(
