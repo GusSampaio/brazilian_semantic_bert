@@ -148,7 +148,6 @@ class SRLDataModule:
             type="torch",
             columns=[
                 "input_ids",
-                "token_type_ids",
                 "attention_mask",
                 "labels",
                 "predicate_indicator",
