@@ -33,11 +33,16 @@ class SRLMetrics:
         flat_true = [item for sublist in true_labels for item in sublist]
         flat_pred = [item for sublist in true_predictions for item in sublist]
 
-
         # Calculating macro metrics ignoring "O" class
         labels_to_evaluate = list(set(flat_true) - {"O"} - {"PRED"})
 
-        if self.eval_mode:
+        metrics = {
+            "precision": float(precision_score(flat_true, flat_pred, labels=labels_to_evaluate, average="macro", zero_division=0)),
+            "recall": float(recall_score(flat_true, flat_pred, labels=labels_to_evaluate, average="macro", zero_division=0)),
+            "f1": float(f1_score(flat_true, flat_pred, labels=labels_to_evaluate, average="macro", zero_division=0)),
+        }
+
+        if getattr(self, "eval_mode", False):
             report = classification_report(
                 flat_true,
                 flat_pred,
@@ -45,13 +50,6 @@ class SRLMetrics:
                 output_dict=True,
                 zero_division=0
             )
-
-        metrics ={}
-        metrics["precision"] = precision_score(flat_true, flat_pred, labels=labels_to_evaluate, average="macro", zero_division=0)
-        metrics["recall"] = recall_score(flat_true, flat_pred, labels=labels_to_evaluate, average="macro", zero_division=0)
-        metrics["f1"] = f1_score(flat_true, flat_pred, labels=labels_to_evaluate, average="macro", zero_division=0)
-
-        if self.eval_mode:
             for role in labels_to_evaluate:
                 if role in report:
                     metrics[f"f1_{role}"] = report[role]["f1-score"]
