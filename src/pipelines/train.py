@@ -1,20 +1,30 @@
+import json
 import os
+import torch.distributed as dist
 os.environ["HF_HOME"] = "/app/.hf_cache"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ.setdefault("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
 
 import torch
+import mlflow
 from transformers import (
     AutoModelForTokenClassification,
     TrainingArguments,
     Trainer,
     DataCollatorForTokenClassification,
-    TrainerCallback
+    TrainerCallback,
+    EarlyStoppingCallback,
 )
+from transformers.integrations import MLflowCallback
 
 from src.data.srl_data_module import SRLDataModule
 from src.training.metrics import SRLMetrics
 from src.utils.json_loader import load_configs
 from src.utils.input_reader import define_model
+
+EXPERIMENT_NAME = "srl-portuguese"
+SEED=42
+EARLY_STOPPING_PATIENCE=4
 
 class TextLoggerCallback(TrainerCallback):
     def __init__(self, log_path):
@@ -38,18 +48,21 @@ class TextLoggerCallback(TrainerCallback):
                 
                 f.write(prefixo + metricas_str + "\n")
 
-def main(model_name, num_epochs, batch_size):
+def main(model_name, num_epochs, batch_size, strategy="baseline", seed=SEED, early_stopping_patience=EARLY_STOPPING_PATIENCE):
+    mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
+    mlflow.set_experiment(EXPERIMENT_NAME)
+
+    run_name = f"{model_name}_{strategy}_seed{seed}"
+
     data_module = SRLDataModule(
-        data_path="data/processed/",
-        use_preprocessed_data=True,
+        raw_dataset_path="data/raw/PBP-classic-complete.conllu",
         model_name=model_name,
         predicate_signal="special_token",
     )
     
     hf_datasets = data_module.datasets
-    train_dataset = hf_datasets["train"]
-    dev_dataset = hf_datasets["validation"]
-    
+    train_dataset, validation_dataset, test_dataset = hf_datasets["train"], hf_datasets["validation"], hf_datasets["test"]
+
     model = AutoModelForTokenClassification.from_pretrained(
         data_module.model_name,
         num_labels=len(data_module.label2id),
@@ -58,7 +71,7 @@ def main(model_name, num_epochs, batch_size):
     )
 
     model.resize_token_embeddings(len(data_module.tokenizer.tokenizer))
- 
+
     data_collator = DataCollatorForTokenClassification(
         tokenizer=data_module.tokenizer.tokenizer,
         padding=True # dynamic padding 
@@ -66,9 +79,17 @@ def main(model_name, num_epochs, batch_size):
 
     metrics_calculator = SRLMetrics(id2label=data_module.id2label)
     
-    output_path = f"artifacts/{model_name}"
+    output_path = f"artifacts/{model_name.split('/')[-1]}/{strategy}/seed{seed}"
     log_file_path = f"{output_path}/training_logs.txt"
+
+    run_name = f"{model_name.split('/')[-1]}_{strategy}_seed{seed}"
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+
+
     training_args = TrainingArguments(
+        ddp_find_unused_parameters=False,  # Avoids errors with DDP when using multiple GPUs
+        run_name=run_name,
+
         output_dir=f"{output_path}/checkpoints",
         eval_strategy="epoch",
         save_strategy="epoch",
@@ -86,32 +107,76 @@ def main(model_name, num_epochs, batch_size):
         learning_rate=3e-5,
         num_train_epochs=num_epochs,
         weight_decay=0.01,
-        logging_steps=50,
+        logging_steps=10,
+
+        report_to="none",
+        seed=seed,
+        data_seed=seed,
     )
+
+    if local_rank == 0:
+        mlflow.start_run(run_name=run_name)
 
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=dev_dataset,
-        tokenizer=data_module.tokenizer.tokenizer,
+        eval_dataset=validation_dataset,
+        processing_class=data_module.tokenizer.tokenizer,
         data_collator=data_collator,
         compute_metrics=metrics_calculator.compute_metrics, 
-        callbacks=[TextLoggerCallback(log_file_path)]
+        callbacks=[TextLoggerCallback(log_file_path), 
+                    EarlyStoppingCallback(early_stopping_patience=early_stopping_patience),
+                    MLflowCallback()]
     )
 
     print("Starting training...")
     trainer.train()
+
     trainer.save_model(f"{output_path}/final_model")
     print(f"End of training! Saved at {output_path}/final_model")
-    print(f"Logs saved at: {log_file_path}")
 
-    metrics = trainer.evaluate(dev_dataset)
-    print(metrics)
+    trainer.pop_callback(EarlyStoppingCallback)
+
+    val_metrics = trainer.evaluate(validation_dataset, metric_key_prefix="best_val")
+    test_metrics = trainer.evaluate(test_dataset, metric_key_prefix="test")
+    
+    # Registra parâmetros customizados na run ativada pelo Trainer
+    if local_rank == 0:
+        active_run = mlflow.active_run()
+        if active_run:
+            mlflow.log_params({
+                "strategy": strategy,
+                "num_epochs_ceiling": num_epochs,
+                "early_stopping_patience": early_stopping_patience,
+            })
+
+            # Salva arquivos locais
+            metrics_path = f"{output_path}/final_metrics.json"
+            with open(metrics_path, "w", encoding="utf-8") as f:
+                json.dump({**val_metrics, **test_metrics}, f, indent=4)
+
+
+            mlflow.log_artifact(log_file_path)
+            mlflow.log_artifact(metrics_path)
+
+            mlflow.end_run()
+
+        print(f"Métricas finais (teste): {test_metrics}")
+
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 if __name__ == "__main__":
     model_name, model_size = define_model()
     cfg_path = f"src/configs/{model_name}.json"
     cfg = load_configs(cfg_path, model_size)
 
-    main(cfg["model_name"], num_epochs=50, batch_size=256)
+    main(
+        cfg["model_name"],
+        num_epochs=3,
+        batch_size=256,
+        strategy="baseline",
+        seed=42,
+        early_stopping_patience=4,
+    )
