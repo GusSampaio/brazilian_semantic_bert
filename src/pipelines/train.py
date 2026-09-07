@@ -77,13 +77,6 @@ class FocalLoss(nn.Module):
             loss = alpha_t * loss
 
         return loss.mean()
-    
-class CustomLossTrainer(Trainer):
-    def __init__(self, *args, loss_strategy="baseline", class_weights=None, gamma=2.0, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.loss_strategy = loss_strategy
-        self.class_weights = class_weights
-        self.gamma = gamma
 
 class CustomLossTrainer(Trainer):
     def __init__(self, *args, loss_strategy="baseline", class_weights=None, gamma=2.0, **kwargs):
