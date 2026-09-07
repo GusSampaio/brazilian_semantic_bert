@@ -20,11 +20,10 @@ from transformers.integrations import MLflowCallback
 from src.data.srl_data_module import SRLDataModule
 from src.training.metrics import SRLMetrics
 from src.utils.json_loader import load_configs
-from src.utils.input_reader import define_model
+from src.utils.input_reader import define_exp_config
 
 EXPERIMENT_NAME = "srl-portuguese"
-SEED=42
-EARLY_STOPPING_PATIENCE=4
+EARLY_STOPPING_PATIENCE=10
 
 class TextLoggerCallback(TrainerCallback):
     def __init__(self, log_path):
@@ -70,7 +69,8 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=SEED, ear
         label2id=data_module.label2id
     )
 
-    model.resize_token_embeddings(len(data_module.tokenizer.tokenizer))
+    model.resize_token_embeddings(len(data_module.tokenizer.tokenizer),
+                                  mean_resizing=True)
 
     data_collator = DataCollatorForTokenClassification(
         tokenizer=data_module.tokenizer.tokenizer,
@@ -138,6 +138,7 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=SEED, ear
 
     trainer.pop_callback(EarlyStoppingCallback)
 
+    metrics_calculator.eval_mode = True
     val_metrics = trainer.evaluate(validation_dataset, metric_key_prefix="best_val")
     test_metrics = trainer.evaluate(test_dataset, metric_key_prefix="test")
     
@@ -168,15 +169,14 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=SEED, ear
         dist.destroy_process_group()
 
 if __name__ == "__main__":
-    model_name, model_size = define_model()
+    model_name, model_size, num_epochs, batch_size, strategy, seed = define_exp_config()
     cfg_path = f"src/configs/{model_name}.json"
     cfg = load_configs(cfg_path, model_size)
 
     main(
         cfg["model_name"],
-        num_epochs=3,
-        batch_size=256,
-        strategy="baseline",
-        seed=42,
-        early_stopping_patience=4,
+        num_epochs=num_epochs,
+        batch_size=batch_size,
+        strategy=strategy,
+        seed=seed,
     )
