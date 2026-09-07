@@ -50,9 +50,9 @@ Examples:
     if num_epochs <= 0:
         raise ValueError("Number of epochs must be a positive integer.")
 
-    if strategy not in {"baseline", "weighted_loss"}:
+    if strategy not in {"baseline", "weighted_loss", "focal_loss"}:
         raise ValueError(
-            f"Invalid strategy '{strategy}'. Valid strategies: baseline, weighted_loss."
+            f"Invalid strategy '{strategy}'. Valid strategies: baseline, weighted_loss, focal_loss."
         )
 
     if seed < 0:
