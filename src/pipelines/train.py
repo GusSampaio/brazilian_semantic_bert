@@ -6,7 +6,11 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ.setdefault("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
 
 import torch
+import torch.nn as nn
 import mlflow
+import numpy as np
+from sklearn.utils.class_weight import compute_class_weight
+
 from transformers import (
     AutoModelForTokenClassification,
     TrainingArguments,
@@ -19,7 +23,6 @@ from transformers.integrations import MLflowCallback
 
 from src.data.srl_data_module import SRLDataModule
 from src.training.metrics import SRLMetrics
-from src.utils.json_loader import load_configs
 from src.utils.input_reader import define_exp_config
 
 EXPERIMENT_NAME = "srl-portuguese"
@@ -47,7 +50,31 @@ class TextLoggerCallback(TrainerCallback):
                 
                 f.write(prefixo + metricas_str + "\n")
 
-def main(model_name, num_epochs, batch_size, strategy="baseline", seed=SEED, early_stopping_patience=EARLY_STOPPING_PATIENCE):
+class WeightedLoss(Trainer):
+    def __init__(self, *args, class_weights=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.class_weights = class_weights
+
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        labels = inputs.get("labels")
+        outputs = model(**inputs)
+        logits = outputs.get("logits")
+
+        if self.class_weights is not None:
+            # Move class weights to the same device as logits
+            class_weights_tensor = torch.tensor(self.class_weights, device=logits.device)
+            loss_fct = nn.CrossEntropyLoss(weight=class_weights_tensor, ignore_index=-100)
+        else:
+            loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
+
+        # Reshape logits and labels to 2D tensors for loss computation
+        loss = loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
+
+        return (loss, outputs) if return_outputs else loss
+
+    def calculate 
+
+def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early_stopping_patience=EARLY_STOPPING_PATIENCE):
     mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
     mlflow.set_experiment(EXPERIMENT_NAME)
 
@@ -142,7 +169,7 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=SEED, ear
     val_metrics = trainer.evaluate(validation_dataset, metric_key_prefix="best_val")
     test_metrics = trainer.evaluate(test_dataset, metric_key_prefix="test")
     
-    # Registra parâmetros customizados na run ativada pelo Trainer
+    # Registering metrics and artifacts in MLflow only if this is the main process (local_rank == 0)
     if local_rank == 0:
         active_run = mlflow.active_run()
         if active_run:
@@ -171,7 +198,8 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=SEED, ear
 if __name__ == "__main__":
     model_name, model_size, num_epochs, batch_size, strategy, seed = define_exp_config()
     cfg_path = f"src/configs/{model_name}.json"
-    cfg = load_configs(cfg_path, model_size)
+    cfg = json.load(open(cfg_path))
+    cfg = cfg[model_size]
 
     main(
         cfg["model_name"],
