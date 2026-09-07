@@ -5,12 +5,10 @@ os.environ["HF_HOME"] = "/app/.hf_cache"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ.setdefault("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
 
+import mlflow
 import torch
 import torch.nn as nn
-import mlflow
-import numpy as np
-from sklearn.utils.class_weight import compute_class_weight
-
+import torch.nn.functional as F
 from transformers import (
     AutoModelForTokenClassification,
     TrainingArguments,
@@ -20,6 +18,7 @@ from transformers import (
     EarlyStoppingCallback,
 )
 from transformers.integrations import MLflowCallback
+
 
 from src.data.srl_data_module import SRLDataModule
 from src.training.metrics import SRLMetrics
@@ -34,45 +33,94 @@ class TextLoggerCallback(TrainerCallback):
         
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         with open(self.log_path, "w", encoding="utf-8") as f:
-            f.write("==================================================\n")
-            f.write("          LOGS DE TREINAMENTO DO MODELO            \n")
-            f.write("==================================================\n\n")
+            f.write("TRAINING LOGS\n")
 
     def on_log(self, args, state, control, logs=None, **kwargs):    
-        """Disparado toda vez que o modelo loga perda ou métricas de validação"""
+        """Triggered every time the model logs loss or validation metrics"""
         if logs:
             with open(self.log_path, "a", encoding="utf-8") as f:
-                # Formata a época e o passo atual de forma limpa
-                prefixo = f"[Época {state.epoch:.2f} / Passo {state.global_step}] "
-                
-                # Converte o dicionário de métricas para uma string legível
-                metricas_str = " | ".join([f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}" for k, v in logs.items()])
-                
-                f.write(prefixo + metricas_str + "\n")
+                prefix = f"[Epoch {state.epoch:.2f} / Step {state.global_step}] "
+                metrics = " | ".join([f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}" for k, v in logs.items()])
+                f.write(prefix + metrics + "\n")
 
-class WeightedLoss(Trainer):
-    def __init__(self, *args, class_weights=None, **kwargs):
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=2.0, alpha=None, ignore_index=-100):
+        super().__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+        self.ignore_index = ignore_index
+
+    def forward(self, logits, targets):
+        # squeezes the logits and targets to 2D and 1D respectively for loss computation
+        # Logits [B, S, C] -> [B*S, C] | Targets [B, S] -> [B*S]
+        num_classes = logits.size(-1)
+        logits = logits.view(-1, num_classes)
+        targets = targets.view(-1)
+
+        # Filtering out the padding tokens (ignore_index) from the loss computation
+        valid_mask = targets != self.ignore_index
+        logits = logits[valid_mask]
+        targets = targets[valid_mask]
+
+        if len(targets) == 0:
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
+        log_pt = F.log_softmax(logits, dim=-1)
+        log_pt = log_pt.gather(1, targets.unsqueeze(1)).squeeze(1)
+        pt = log_pt.exp()
+
+        focal_term = (1 - pt) ** self.gamma
+        loss = -focal_term * log_pt
+
+        if self.alpha is not None:
+            alpha_t = self.alpha.to(logits.device)[targets]
+            loss = alpha_t * loss
+
+        return loss.mean()
+    
+class CustomLossTrainer(Trainer):
+    def __init__(self, *args, loss_strategy="baseline", class_weights=None, gamma=2.0, **kwargs):
         super().__init__(*args, **kwargs)
+        self.loss_strategy = loss_strategy
         self.class_weights = class_weights
+        self.gamma = gamma
+
+class CustomLossTrainer(Trainer):
+    def __init__(self, *args, loss_strategy="baseline", class_weights=None, gamma=2.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.loss_strategy = loss_strategy
+        self.class_weights = class_weights
+        self.gamma = gamma
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         labels = inputs.get("labels")
         outputs = model(**inputs)
         logits = outputs.get("logits")
 
-        if self.class_weights is not None:
-            # Move class weights to the same device as logits
-            class_weights_tensor = torch.tensor(self.class_weights, device=logits.device)
-            loss_fct = nn.CrossEntropyLoss(weight=class_weights_tensor, ignore_index=-100)
+        # Logits -> [batch_size * seq_len, num_labels]
+        # Labels -> [batch_size * seq_len]
+        num_labels = logits.size(-1)
+        flat_logits = logits.view(-1, num_labels)
+        flat_labels = labels.view(-1)
+
+        if self.loss_strategy == "focal_loss":
+            loss_fct = FocalLoss(
+                gamma=self.gamma, 
+                alpha=self.class_weights, 
+                ignore_index=-100
+            )
+            loss = loss_fct(flat_logits, flat_labels)
+
+        elif self.loss_strategy == "weighted_loss" and self.class_weights is not None:
+            weights = self.class_weights.to(logits.device)
+            loss_fct = nn.CrossEntropyLoss(weight=weights, ignore_index=-100)
+            loss = loss_fct(flat_logits, flat_labels)
+
         else:
             loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
-
-        # Reshape logits and labels to 2D tensors for loss computation
-        loss = loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
+            loss = loss_fct(flat_logits, flat_labels)
 
         return (loss, outputs) if return_outputs else loss
-
-    def calculate 
 
 def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early_stopping_patience=EARLY_STOPPING_PATIENCE):
     mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
@@ -144,9 +192,11 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
     if local_rank == 0:
         mlflow.start_run(run_name=run_name)
 
-    trainer = Trainer(
+    trainer = CustomLossTrainer(
         model=model,
         args=training_args,
+        loss_strategy=strategy,
+        class_weights=None,
         train_dataset=train_dataset,
         eval_dataset=validation_dataset,
         processing_class=data_module.tokenizer.tokenizer,
