@@ -3,16 +3,17 @@ import sys
 def define_model():
     usage = """
 Usage:
-    python -m src.pipelines.train_pipeline --<model> --<size>
+    python -m src.pipelines.train --<model> --<size>
 
 Available models:
-    --bertimbau      --base | --large
-    --xlm-roberta    --base | --large
-    --mbert          --base
+    --bertimbau          --base | --large
+    --xlm-roberta        --base | --large
+    --norberto           --base | --large
+    --bert-multilingual  --base
 
 Examples:
-    python -m src.pipelines.train_pipeline --bertimbau --base
-    python -m src.pipelines.train_pipeline --xlm-roberta --large
+    python -m src.pipelines.train --bertimbau --base
+    python -m src.pipelines.train --xlm-roberta --large
 """
 
     try:
@@ -26,7 +27,8 @@ Examples:
     valid_models = {
         "bertimbau": {"base", "large"},
         "xlm-roberta": {"base", "large"},
-        "mbert": {"base"},
+        "bert-multilingual": {"base", "large"},
+        "norberto": {"base", "large"},
     }
 
     if model_name not in valid_models:
