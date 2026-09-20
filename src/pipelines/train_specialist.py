@@ -1,7 +1,6 @@
 import json
 import os
 import sys
-import numpy as np
 import torch.distributed as dist
 os.environ["HF_HOME"] = "/app/.hf_cache"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -21,12 +20,12 @@ from transformers import (
 )
 
 from src.data.srl_data_module import SRLDataModule
-from src.training.class_weights import compute_smoothed_class_weights
 from src.training.metrics import SRLMetrics
 from src.utils.input_reader import define_exp_config
 
 EXPERIMENT_NAME = "srl-portuguese"
 EARLY_STOPPING_PATIENCE = 10
+FOCAL_GAMMA = 2.0
 
 
 class TextLoggerCallback(TrainerCallback):
@@ -45,10 +44,9 @@ class TextLoggerCallback(TrainerCallback):
 
 
 class FocalLoss(nn.Module):
-    def __init__(self, gamma=2.0, alpha=None, ignore_index=-100):
+    def __init__(self, gamma=2.0, ignore_index=-100):
         super().__init__()
         self.gamma = gamma
-        self.alpha = alpha
         self.ignore_index = ignore_index
 
     def forward(self, logits, targets):
@@ -63,46 +61,40 @@ class FocalLoss(nn.Module):
         if len(targets) == 0:
             return torch.tensor(0.0, device=logits.device, requires_grad=True)
 
-        log_pt = F.log_softmax(logits, dim=-1)
+        log_pt = F.log_softmax(logits.float(), dim=-1)
         log_pt = log_pt.gather(1, targets.unsqueeze(1)).squeeze(1)
-        pt = log_pt.exp()
+        pt = log_pt.exp().clamp(max=1.0)
 
-        focal_term = (1 - pt) ** self.gamma
+        focal_term = (1 - pt).clamp_min(0.0).pow(self.gamma)
         loss = -focal_term * log_pt
-
-        if self.alpha is not None:
-            alpha_t = self.alpha.to(logits.device)[targets]
-            loss = alpha_t * loss
 
         return loss.mean()
 
 
+class TokenCrossEntropyLoss(nn.CrossEntropyLoss):
+    def forward(self, logits, targets):
+        num_classes = logits.size(-1)
+        return super().forward(
+            logits.view(-1, num_classes),
+            targets.view(-1),
+        )
+
+
 class CustomLossTrainer(Trainer):
-    def __init__(self, *args, loss_strategy="baseline", class_weights=None, gamma=2.0, **kwargs):
+    def __init__(self, *args, loss_strategy="baseline", **kwargs):
         super().__init__(*args, **kwargs)
-        self.loss_strategy = loss_strategy
-        self.class_weights = class_weights
-        self.gamma = gamma
+        self.loss_fct = (
+            FocalLoss(gamma=FOCAL_GAMMA, ignore_index=-100)
+            if loss_strategy == "focal_loss"
+            else TokenCrossEntropyLoss(ignore_index=-100)
+        )
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         labels = inputs.get("labels")
         outputs = model(**inputs)
         logits = outputs.get("logits")
 
-        num_labels = logits.size(-1)
-        flat_logits = logits.view(-1, num_labels)
-        flat_labels = labels.view(-1)
-
-        if self.loss_strategy in {"focal_loss", "weighted_focal_loss"}:
-            loss_fct = FocalLoss(gamma=self.gamma, alpha=self.class_weights, ignore_index=-100)
-            loss = loss_fct(flat_logits, flat_labels)
-        elif self.loss_strategy == "weighted_loss" and self.class_weights is not None:
-            weights = self.class_weights.to(logits.device)
-            loss_fct = nn.CrossEntropyLoss(weight=weights, ignore_index=-100)
-            loss = loss_fct(flat_logits, flat_labels)
-        else:
-            loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
-            loss = loss_fct(flat_logits, flat_labels)
+        loss = self.loss_fct(logits, labels)
 
         return (loss, outputs) if return_outputs else loss
 
@@ -149,10 +141,6 @@ def remap_dataset_labels(dataset, source_id2label, specialist_label2id):
 
     return dataset.map(filter_example, batched=False, load_from_cache_file=False)
 
-from collections import Counter
-
-
-
 def main(model_name, num_epochs, batch_size, component, strategy="baseline", seed=42,
          early_stopping_patience=EARLY_STOPPING_PATIENCE):
     assert component in ["numbered", "modifiers"], "component deve ser 'numbered' ou 'modifiers'"
@@ -177,19 +165,6 @@ def main(model_name, num_epochs, batch_size, component, strategy="baseline", see
     ds_train = remap_dataset_labels(data_module.datasets["train"], source_id2label, label2id)
     ds_val = remap_dataset_labels(data_module.datasets["validation"], source_id2label, label2id)
     ds_test = remap_dataset_labels(data_module.datasets["test"], source_id2label, label2id)
-
-    class_weights = None
-    if strategy == "weighted_focal_loss":
-        class_weights, class_counts = compute_smoothed_class_weights(
-            ds_train, len(label2id)
-        )
-        if local_rank == 0:
-            print("Smoothed class weights (filtered training split only):")
-            for label, label_id in label2id.items():
-                print(
-                    f"  {label}: count={class_counts[label_id].item()} "
-                    f"weight={class_weights[label_id].item():.6f}"
-                )
 
     data_collator = DataCollatorForTokenClassification(tokenizer=data_module.tokenizer.tokenizer, padding=True)
     metrics_calculator = SRLMetrics(id2label=id2label)
@@ -226,7 +201,6 @@ def main(model_name, num_epochs, batch_size, component, strategy="baseline", see
         model=model,
         args=training_args,
         loss_strategy=strategy,
-        class_weights=class_weights,
         train_dataset=ds_train,
         eval_dataset=ds_val,
         processing_class=data_module.tokenizer.tokenizer,
