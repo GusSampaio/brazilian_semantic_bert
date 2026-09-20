@@ -1,0 +1,10 @@
+{
+    "base":
+    {
+        "model_name":"Itau-Unibanco/NorBERTo-base"
+    },
+    "large":
+    {
+        "model_name":"Itau-Unibanco/NorBERTo-large"
+    }
+}
