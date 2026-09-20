@@ -26,6 +26,7 @@ from src.utils.input_reader import define_exp_config
 
 EXPERIMENT_NAME = "srl-portuguese"
 EARLY_STOPPING_PATIENCE=10
+FOCAL_GAMMA = 2.0
 
 class TextLoggerCallback(TrainerCallback):
     def __init__(self, log_path):
@@ -44,10 +45,10 @@ class TextLoggerCallback(TrainerCallback):
                 f.write(prefix + metrics + "\n")
 
 class FocalLoss(nn.Module):
-    def __init__(self, gamma=2.0, alpha=None, ignore_index=-100):
+    def __init__(self, gamma=2.0, reduction="mean", ignore_index=-100):
         super().__init__()
         self.gamma = gamma
-        self.alpha = alpha
+        self.reduction = reduction
         self.ignore_index = ignore_index
 
     def forward(self, logits, targets):
@@ -60,58 +61,50 @@ class FocalLoss(nn.Module):
         # Filtering out the padding tokens (ignore_index) from the loss computation
         valid_mask = targets != self.ignore_index
         logits = logits[valid_mask]
-        targets = targets[valid_mask]
+        targets = targets[valid_mask]       
 
         if len(targets) == 0:
             return torch.tensor(0.0, device=logits.device, requires_grad=True)
 
-        log_pt = F.log_softmax(logits, dim=-1)
+        log_pt = F.log_softmax(logits.float(), dim=-1)
         log_pt = log_pt.gather(1, targets.unsqueeze(1)).squeeze(1)
-        pt = log_pt.exp()
+        pt = log_pt.exp().clamp(max=1.0)
 
-        focal_term = (1 - pt) ** self.gamma
+        focal_term = (1 - pt).clamp_min(0.0).pow(self.gamma)
         loss = -focal_term * log_pt
 
-        if self.alpha is not None:
-            alpha_t = self.alpha.to(logits.device)[targets]
-            loss = alpha_t * loss
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        else:
+            return loss
 
-        return loss.mean()
+
+class TokenCrossEntropyLoss(nn.CrossEntropyLoss):
+    def forward(self, logits, targets):
+        num_classes = logits.size(-1)
+        return super().forward(
+            logits.view(-1, num_classes),
+            targets.view(-1),
+        )
+
 
 class CustomLossTrainer(Trainer):
-    def __init__(self, *args, loss_strategy="baseline", class_weights=None, gamma=2.0, **kwargs):
+    def __init__(self, *args, loss_strategy="baseline", **kwargs):
         super().__init__(*args, **kwargs)
-        self.loss_strategy = loss_strategy
-        self.class_weights = class_weights
-        self.gamma = gamma
+        self.loss_fct = (
+            FocalLoss(gamma=FOCAL_GAMMA, ignore_index=-100)
+            if loss_strategy == "focal_loss"
+            else TokenCrossEntropyLoss(ignore_index=-100)
+        )
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         labels = inputs.get("labels")
         outputs = model(**inputs)
         logits = outputs.get("logits")
 
-        # Logits -> [batch_size * seq_len, num_labels]
-        # Labels -> [batch_size * seq_len]
-        num_labels = logits.size(-1)
-        flat_logits = logits.view(-1, num_labels)
-        flat_labels = labels.view(-1)
-
-        if self.loss_strategy == "focal_loss":
-            loss_fct = FocalLoss(
-                gamma=self.gamma, 
-                alpha=self.class_weights, 
-                ignore_index=-100
-            )
-            loss = loss_fct(flat_logits, flat_labels)
-
-        elif self.loss_strategy == "weighted_loss" and self.class_weights is not None:
-            weights = self.class_weights.to(logits.device)
-            loss_fct = nn.CrossEntropyLoss(weight=weights, ignore_index=-100)
-            loss = loss_fct(flat_logits, flat_labels)
-
-        else:
-            loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
-            loss = loss_fct(flat_logits, flat_labels)
+        loss = self.loss_fct(logits, labels)
 
         return (loss, outputs) if return_outputs else loss
 
@@ -119,7 +112,10 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
     mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
     mlflow.set_experiment(EXPERIMENT_NAME)
 
-    run_name = f"{model_name}_{strategy}_seed{seed}"
+    output_path = f"artifacts/{model_name.split('/')[-1]}/{strategy}/seed{seed}"
+    log_file_path = f"{output_path}/training_logs.txt"
+    run_name = f"{model_name.split('/')[-1]}_{strategy}_seed{seed}"
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
 
     data_module = SRLDataModule(
         raw_dataset_path="data/raw/PBP-classic-complete.conllu",
@@ -147,13 +143,6 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
 
     metrics_calculator = SRLMetrics(id2label=data_module.id2label)
     
-    output_path = f"artifacts/{model_name.split('/')[-1]}/{strategy}/seed{seed}"
-    log_file_path = f"{output_path}/training_logs.txt"
-
-    run_name = f"{model_name.split('/')[-1]}_{strategy}_seed{seed}"
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-
-
     training_args = TrainingArguments(
         ddp_find_unused_parameters=False,  # Avoids errors with DDP when using multiple GPUs
         run_name=run_name,
@@ -189,7 +178,6 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
         model=model,
         args=training_args,
         loss_strategy=strategy,
-        class_weights=None,
         train_dataset=train_dataset,
         eval_dataset=validation_dataset,
         processing_class=data_module.tokenizer.tokenizer,
