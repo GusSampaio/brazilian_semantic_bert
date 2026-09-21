@@ -109,6 +109,11 @@ class CustomLossTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
 def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early_stopping_patience=EARLY_STOPPING_PATIENCE):
+    if strategy not in {"baseline", "focal_loss"}:
+        raise ValueError(
+            "Single-model training strategy must be 'baseline' or 'focal_loss'."
+        )
+
     mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
     mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
 
