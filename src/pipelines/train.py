@@ -24,7 +24,7 @@ from src.data.srl_data_module import SRLDataModule
 from src.training.metrics import SRLMetrics
 from src.utils.input_reader import define_exp_config
 
-EXPERIMENT_NAME = "srl-portuguese"
+MLFLOW_EXPERIMENT_NAME = "srl-portuguese"
 EARLY_STOPPING_PATIENCE=10
 FOCAL_GAMMA = 2.0
 
@@ -110,7 +110,7 @@ class CustomLossTrainer(Trainer):
 
 def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early_stopping_patience=EARLY_STOPPING_PATIENCE):
     mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
-    mlflow.set_experiment(EXPERIMENT_NAME)
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
 
     output_path = f"artifacts/{model_name.split('/')[-1]}/{strategy}/seed{seed}"
     log_file_path = f"{output_path}/training_logs.txt"
