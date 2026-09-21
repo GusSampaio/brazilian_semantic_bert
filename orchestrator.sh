@@ -5,8 +5,13 @@ MODEL_NAME=$1         # ex: bertimbau
 MODEL_SIZE=$2         # ex: base
 NUM_EPOCHS=$3         # ex: 50
 BATCH_SIZE=$4         # ex: 256
-STRATEGY=$5           # ex: baseline
+STRATEGY=$5           # must be specialists_ensemble
 SEED=$6               # ex: 42
+
+if [[ "$STRATEGY" != "specialists_ensemble" ]]; then
+    echo "Error: specialist artifacts require strategy 'specialists_ensemble'." >&2
+    exit 1
+fi
 
 echo "=== Training specialist: numbered ==="
 torchrun --nproc_per_node=2 -m src.pipelines.train_specialist \

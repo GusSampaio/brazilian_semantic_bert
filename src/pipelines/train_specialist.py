@@ -26,6 +26,8 @@ from src.utils.input_reader import define_exp_config
 EXPERIMENT_NAME = "srl-portuguese"
 EARLY_STOPPING_PATIENCE = 10
 FOCAL_GAMMA = 2.0
+SPECIALIST_STRATEGY = "specialists_ensemble"
+SPECIALIST_LOSS_STRATEGY = "baseline"
 
 
 class TextLoggerCallback(TrainerCallback):
@@ -141,9 +143,14 @@ def remap_dataset_labels(dataset, source_id2label, specialist_label2id):
 
     return dataset.map(filter_example, batched=False, load_from_cache_file=False)
 
-def main(model_name, num_epochs, batch_size, component, strategy="baseline", seed=42,
+def main(model_name, num_epochs, batch_size, component, strategy=SPECIALIST_STRATEGY, seed=42,
          early_stopping_patience=EARLY_STOPPING_PATIENCE):
     assert component in ["numbered", "modifiers"], "component deve ser 'numbered' ou 'modifiers'"
+    if strategy != SPECIALIST_STRATEGY:
+        raise ValueError(
+            f"Specialist models must use strategy '{SPECIALIST_STRATEGY}' so their "
+            "artifacts remain separate from single-model experiments."
+        )
 
     mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
     mlflow.set_experiment(EXPERIMENT_NAME)
@@ -200,7 +207,7 @@ def main(model_name, num_epochs, batch_size, component, strategy="baseline", see
     trainer = CustomLossTrainer(
         model=model,
         args=training_args,
-        loss_strategy=strategy,
+        loss_strategy=SPECIALIST_LOSS_STRATEGY,
         train_dataset=ds_train,
         eval_dataset=ds_val,
         processing_class=data_module.tokenizer.tokenizer,
@@ -224,7 +231,8 @@ def main(model_name, num_epochs, batch_size, component, strategy="baseline", see
         mlflow.start_run(run_name=f"{run_base_name}_{component}")
         mlflow.set_tags({"component": component, "strategy": strategy})
         mlflow.log_params({
-            "model_name": model_name, "strategy": strategy, "seed": seed,
+            "model_name": model_name, "strategy": strategy,
+            "loss_strategy": SPECIALIST_LOSS_STRATEGY, "seed": seed,
             "batch_size": batch_size, "num_epochs_ceiling": num_epochs,
             "early_stopping_patience": early_stopping_patience,
         })
