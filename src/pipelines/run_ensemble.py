@@ -98,6 +98,12 @@ def predict_and_merge(model_num, model_mod, dataset, data_collator, label2id, de
 
 
 def main(model_name, strategy, seed, num_epochs, early_stopping_patience):
+    if strategy != "specialists_ensemble":
+        raise ValueError(
+            "Ensemble results must use strategy 'specialists_ensemble' to avoid "
+            "overwriting metrics from single-model strategies."
+        )
+
     mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
     mlflow.set_experiment(EXPERIMENT_NAME)
 
@@ -127,7 +133,10 @@ def main(model_name, strategy, seed, num_epochs, early_stopping_patience):
         dataset=data_module.datasets["test"], data_collator=data_collator,
         label2id=label2id, device=device
     )
-    test_metrics = metrics_calculator.compute_metrics((preds, true_labels))
+    test_metrics = {
+        f"test_{key}": value
+        for key, value in metrics_calculator.compute_metrics((preds, true_labels)).items()
+    }
 
     mlflow.start_run(run_name=f"{run_base_name}_ensemble")
     mlflow.set_tags({"component": "ensemble", "strategy": strategy})
@@ -135,7 +144,7 @@ def main(model_name, strategy, seed, num_epochs, early_stopping_patience):
         "model_name": model_name, "strategy": "specialists_ensemble", "seed": seed,
         "num_epochs_ceiling": num_epochs, "early_stopping_patience": early_stopping_patience,
     })
-    mlflow.log_metrics({f"test_{k}": v for k, v in test_metrics.items() if isinstance(v, (int, float))})
+    mlflow.log_metrics({k: v for k, v in test_metrics.items() if isinstance(v, (int, float))})
 
     metrics_path = f"{output_path}/final_metrics.json"
     with open(metrics_path, "w", encoding="utf-8") as f:
