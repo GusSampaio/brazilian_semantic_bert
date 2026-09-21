@@ -50,9 +50,15 @@ Examples:
     if num_epochs <= 0:
         raise ValueError("Number of epochs must be a positive integer.")
 
-    if strategy not in {"baseline", "weighted_loss", "focal_loss"}:
+    valid_strategies = {
+        "baseline",
+        "focal_loss",
+        "specialists_ensemble",
+    }
+    if strategy not in valid_strategies:
         raise ValueError(
-            f"Invalid strategy '{strategy}'. Valid strategies: baseline, weighted_loss, focal_loss."
+            f"Invalid strategy '{strategy}'. Valid strategies: "
+            f"{', '.join(sorted(valid_strategies))}."
         )
 
     if seed < 0:
