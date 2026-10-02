@@ -80,7 +80,6 @@ class FocalLoss(nn.Module):
         else:
             return loss
 
-
 class TokenCrossEntropyLoss(nn.CrossEntropyLoss):
     def forward(self, logits, targets):
         num_classes = logits.size(-1)
@@ -88,7 +87,6 @@ class TokenCrossEntropyLoss(nn.CrossEntropyLoss):
             logits.view(-1, num_classes),
             targets.view(-1),
         )
-
 
 class CustomLossTrainer(Trainer):
     def __init__(self, *args, loss_strategy="baseline", **kwargs):
@@ -149,7 +147,7 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
     metrics_calculator = SRLMetrics(id2label=data_module.id2label)
     
     training_args = TrainingArguments(
-        ddp_find_unused_parameters=False,  # Avoids errors with DDP when using multiple GPUs
+        ddp_find_unused_parameters=False, # Avoids errors with DDP when using multiple GPUs
         run_name=run_name,
 
         output_dir=f"{output_path}/checkpoints",

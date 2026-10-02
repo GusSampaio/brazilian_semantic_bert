@@ -1,3 +1,5 @@
+""" Evaluation pipeline for the semantic role labeling model when pushed from the Hugging Face Hub """
+
 from datasets import Dataset
 import json
 import numpy as np
