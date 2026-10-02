@@ -9,8 +9,8 @@ import torch
 from sklearn.metrics import (accuracy_score, confusion_matrix, f1_score, precision_recall_fscore_support)
 from transformers import (AutoModelForTokenClassification, DataCollatorForTokenClassification, Trainer, TrainingArguments)
 
-from src.data.conllu_parser import PBP_parser
-from src.data.srl_data_module import SRLDataModule
+from src.semantic_role_labeling.data.conllu_parser import PBP_parser
+from src.semantic_role_labeling.data.srl_data_module import SRLDataModule
 
 DEFAULT_MODEL_PATH = "artifacts/xlm-roberta-large/baseline/seed120/final_model"
 DEFAULT_BASE_MODEL = "xlm-roberta-large"

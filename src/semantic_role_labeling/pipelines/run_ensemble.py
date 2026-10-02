@@ -10,9 +10,9 @@ import torch.nn.functional as F
 import numpy as np
 from transformers import AutoModelForTokenClassification, DataCollatorForTokenClassification
 
-from src.data.srl_data_module import SRLDataModule
-from src.training.metrics import SRLMetrics
-from src.utils.input_reader import define_exp_config
+from src.semantic_role_labeling.data.srl_data_module import SRLDataModule
+from src.semantic_role_labeling.training.metrics import SRLMetrics
+from src.semantic_role_labeling.utils.input_reader import define_exp_config
 
 EXPERIMENT_NAME = "srl-portuguese"
 
@@ -158,7 +158,7 @@ def main(model_name, strategy, seed, num_epochs, early_stopping_patience):
 
 if __name__ == "__main__":
     model_name, model_size, num_epochs, batch_size, strategy, seed = define_exp_config()
-    cfg_path = f"src/configs/{model_name}.json"
+    cfg_path = f"src/semantic_role_labeling/configs/{model_name}.json"
     cfg = json.load(open(cfg_path))
     cfg = cfg[model_size]
 

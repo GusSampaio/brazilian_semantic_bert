@@ -9,15 +9,15 @@ SEED=$5               # ex: 42
 STRATEGY="specialists_ensemble"
 
 echo "=== Training specialist: numbered ==="
-torchrun --nproc_per_node=2 -m src.pipelines.train_specialist \
+torchrun --nproc_per_node=2 -m src.semantic_role_labeling.pipelines.train_specialist \
     --"$MODEL_NAME" --"$MODEL_SIZE" --"$NUM_EPOCHS" --"$BATCH_SIZE" --"$STRATEGY" --"$SEED" --numbered
 
 echo "=== Training specialist: modifiers ==="
-torchrun --nproc_per_node=2 -m src.pipelines.train_specialist \
+torchrun --nproc_per_node=2 -m src.semantic_role_labeling.pipelines.train_specialist \
     --"$MODEL_NAME" --"$MODEL_SIZE" --"$NUM_EPOCHS" --"$BATCH_SIZE" --"$STRATEGY" --"$SEED" --modifiers
 
 echo "=== Running ensemble ==="
-python -m src.pipelines.run_ensemble \
+python -m src.semantic_role_labeling.pipelines.run_ensemble \
     --"$MODEL_NAME" --"$MODEL_SIZE" --"$NUM_EPOCHS" --"$BATCH_SIZE" --"$STRATEGY" --"$SEED"
 
 echo "Pipeline complete!"

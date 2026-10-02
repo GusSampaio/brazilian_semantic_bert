@@ -19,9 +19,9 @@ from transformers import (
     EarlyStoppingCallback,
 )
 
-from src.data.srl_data_module import SRLDataModule
-from src.training.metrics import SRLMetrics
-from src.utils.input_reader import define_exp_config
+from src.semantic_role_labeling.data.srl_data_module import SRLDataModule
+from src.semantic_role_labeling.training.metrics import SRLMetrics
+from src.semantic_role_labeling.utils.input_reader import define_exp_config
 
 EXPERIMENT_NAME = "srl-portuguese"
 EARLY_STOPPING_PATIENCE = 10
@@ -272,7 +272,7 @@ if __name__ == "__main__":
     if component not in {"numbered", "modifiers"}:
         raise ValueError(f"Invalid component '{component}'. Valid: numbered, modifiers.")
     
-    cfg_path = f"src/configs/{model_name}.json"
+    cfg_path = f"src/semantic_role_labeling/configs/{model_name}.json"
     cfg = json.load(open(cfg_path))
     cfg = cfg[model_size]
 

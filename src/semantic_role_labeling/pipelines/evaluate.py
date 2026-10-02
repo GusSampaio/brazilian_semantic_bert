@@ -13,11 +13,11 @@ from transformers import (
     TrainingArguments,
 )
 
-from src.data.conllu_parser import PBP_parser
-from src.data.instance_builder import SRLInstanceBuilder
-from src.data.splitter import SRLSplitter
-from src.data.srl_data_module import SRLDataModule
-from src.training.metrics import SRLMetrics
+from src.semantic_role_labeling.data.conllu_parser import PBP_parser
+from src.semantic_role_labeling.data.instance_builder import SRLInstanceBuilder
+from src.semantic_role_labeling.data.splitter import SRLSplitter
+from src.semantic_role_labeling.data.srl_data_module import SRLDataModule
+from src.semantic_role_labeling.training.metrics import SRLMetrics
 
 np.random.seed(42)
 os.environ["HF_HOME"] = "/app/.hf_cache"

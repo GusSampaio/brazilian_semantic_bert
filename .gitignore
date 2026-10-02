@@ -9,3 +9,12 @@ data/
 artifacts/
 notebooks/
 .hf_cache
+
+run_exp.sh
+
+*.MD
+
+.cache
+/tmp_eval
+mlflow.*
+.vscode/

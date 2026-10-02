@@ -3,7 +3,7 @@ import sys
 def define_exp_config():
     usage = """
 Usage:
-    python -m src.pipelines.train --<model> --<version> --<num_epochs> --<batch_size> --<strategy> --<seed>
+    python -m src.semantic_role_labeling.pipelines.train --<model> --<version> --<num_epochs> --<batch_size> --<strategy> --<seed>
 
 Available models:
     --bertimbau          --base | --large
@@ -12,8 +12,8 @@ Available models:
     --bert-multilingual  --base
 
 Examples:
-    python -m src.pipelines.train --bertimbau --base --10 --32 --baseline --42
-    python -m src.pipelines.train --xlm-roberta --large
+    python -m src.semantic_role_labeling.pipelines.train --bertimbau --base --10 --32 --baseline --42
+    python -m src.semantic_role_labeling.pipelines.train --xlm-roberta --large
 """
 
     try:

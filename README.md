@@ -1,9 +1,9 @@
 # Brazilian Semantic BERT
 
-Training and evaluation of Transformer models for **Semantic Role Labeling
-(SRL) in Brazilian Portuguese**, using PropBank.Br data. Each instance
-represents a sentence with a known predicate marked by special tokens, and the
-model classifies semantic roles at the token level.
+Training and evaluation of Transformer models for **predicate identification**
+and **Semantic Role Labeling (SRL) in Brazilian Portuguese**, using PropBank.Br
+data. Predicate identification detects all predicates in a sentence; SRL then
+classifies semantic roles around a known predicate marked by special tokens.
 
 The project supports comparisons among different encoders, loss strategies,
 and a specialist ensemble. It also provides confusion matrices, per-role F1
@@ -18,7 +18,7 @@ comparisons, and a dashboard for qualitative analysis with linguists.
 | `xlm-roberta` | `base`, `large` | XLM-RoBERTa |
 | `norberto` | `base`, `large` | NorBERTo |
 
-Available strategies:
+Available SRL strategies:
 
 - `baseline`: cross-entropy loss;
 - `focal_loss`: focal loss with $\gamma = 2$;
@@ -28,20 +28,36 @@ Available strategies:
 Global precision, recall, and F1 are macro-averaged, excluding the `O` and
 `PRED` classes.
 
+Predicate identification supports `baseline` and `focal_loss`. Its precision,
+recall, and F1 use `PRED` as the positive class; sentence exact match is also
+reported.
+
 ## Project structure
 
 ```text
 data/raw/                  original data
 data/processed/            processed splits and label vocabulary
-src/configs/               models associated with each alias
-src/data/                  dataset parsing, construction, and splitting
-src/features/              tokenization and label alignment
-src/pipelines/             training, evaluation, inference, and ensemble
-src/training/              metrics and training components
-src/utils/                 analyses, plots, and dashboards
+src/
+├── semantic_role_labeling/
+│   ├── configs/           models associated with each alias
+│   ├── data/              dataset parsing, construction, and splitting
+│   ├── features/          tokenization and label alignment
+│   ├── pipelines/         training, evaluation, inference, and ensemble
+│   ├── training/          metrics and training components
+│   └── utils/             analyses, plots, and dashboards
+└── predicate_identification/
+	├── data/              predicate dataset construction
+	├── features/          tokenization and binary label alignment
+	├── models/            predicate detection models
+	├── pipelines/         training, evaluation, and inference entry points
+	├── training/          binary metrics and training components
+	└── utils/             task-specific utilities
 artifacts/                 generated models, metrics, and results
 mlruns/                    artifacts managed by MLflow
 ```
+
+The two tasks currently remain independent. A shared package will only be
+introduced after their common interfaces and data contracts are established.
 
 ## Environment
 
@@ -69,7 +85,7 @@ docker start -ai brazilian_semantic_bert
 Run the Python commands in this document inside the container from `/app`.
 Dependencies are pinned in `requirements.txt`.
 
-## Training
+## SRL training
 
 The training interface receives six positional arguments, all prefixed with
 `--`:
@@ -81,14 +97,14 @@ The training interface receives six positional arguments, all prefixed with
 Example with two GPUs:
 
 ```bash
-torchrun --nproc_per_node=2 -m src.pipelines.train \
+torchrun --nproc_per_node=2 -m src.semantic_role_labeling.pipelines.train \
 	--bertimbau --base --50 --256 --baseline --42
 ```
 
 Example with focal loss:
 
 ```bash
-torchrun --nproc_per_node=2 -m src.pipelines.train \
+torchrun --nproc_per_node=2 -m src.semantic_role_labeling.pipelines.train \
 	--xlm-roberta --large --50 --128 --focal_loss --42
 ```
 
@@ -115,6 +131,72 @@ bash orchestrator.sh bertimbau base 50 256 42
 Artifacts are isolated under `specialists_ensemble` and do not overwrite
 `baseline` or `focal_loss` results.
 
+## Predicate identification
+
+The binary labels are `O=0` and `PRED=1`. The PropBank parser originally emits
+one instance per known predicate. Before splitting, the predicate task groups
+instances by `sentence_id`, validates their token sequences, and marks all
+predicate indices in one sentence-level example. Splits are therefore made at
+sentence level with the fixed split seed `42`, as in the SRL experiment.
+
+Only the first subtoken of each source token is evaluated. Special tokens and
+continuation subtokens receive label `-100`.
+
+### Training
+
+The interface uses the same model aliases and six experiment arguments as SRL,
+but accepts only `baseline` and `focal_loss`:
+
+```bash
+torchrun --nproc_per_node=2 -m src.predicate_identification.pipelines.train \
+	--bertimbau --base --50 --256 --baseline --42
+```
+
+To initialize the encoder from an existing SRL checkpoint while replacing its
+classification head with the binary head:
+
+```bash
+torchrun --nproc_per_node=2 -m src.predicate_identification.pipelines.train \
+	--bertimbau --base --50 --256 --focal_loss --42 \
+	--initial-model-path artifacts/bert-base-portuguese-cased/baseline/seed42/final_model
+```
+
+The complete seven-model baseline/focal matrix is defined in
+`run_predicate_exp.sh`. It intentionally excludes specialist models:
+
+```bash
+bash run_predicate_exp.sh
+```
+
+Predicate artifacts are isolated from SRL:
+
+```text
+artifacts/predicate_identification/<model>/<strategy>/seed<seed>/
+├── final_model/
+├── final_metrics.json
+└── training_logs.txt
+```
+
+### Evaluation
+
+Standalone evaluation reconstructs the test split and writes
+`test_metrics.json` and token-aligned `test_predictions.jsonl`:
+
+```bash
+python -m src.predicate_identification.pipelines.evaluate \
+	--model-path artifacts/predicate_identification/bert-base-portuguese-cased/baseline/seed42/final_model
+```
+
+### Inference
+
+Inference can return multiple predicate indices, tokens, and probabilities:
+
+```bash
+python -m src.predicate_identification.inference \
+	--model-path artifacts/predicate_identification/bert-base-portuguese-cased/baseline/seed42/final_model \
+	--text "Maria chegou e começou a trabalhar."
+```
+
 ## MLflow tracking
 
 ```bash
@@ -135,13 +217,13 @@ Aggregates precision, recall, and F1 by model and strategy. When multiple seeds
 are available, it reports the mean and standard deviation.
 
 ```bash
-python -m src.utils.analyze_metrics_table --artifacts-dir artifacts
+python -m src.semantic_role_labeling.utils.analyze_metrics_table --artifacts-dir artifacts
 ```
 
 To restrict the comparison to specific strategies:
 
 ```bash
-python -m src.utils.analyze_metrics_table \
+python -m src.semantic_role_labeling.utils.analyze_metrics_table \
 	--artifacts-dir artifacts \
 	--strategies baseline focal_loss
 ```
@@ -155,7 +237,7 @@ Outputs in `artifacts/comparisons/metrics_table/`:
 ### F1 by semantic role
 
 ```bash
-python -m src.utils.analyze_f1_comparison \
+python -m src.semantic_role_labeling.utils.analyze_f1_comparison \
 	--artifacts-dir artifacts \
 	--data-dir data/processed \
 	--strategy baseline
@@ -167,7 +249,7 @@ CSV, PNG, and interactive HTML versions are generated under
 ### Confusion matrices
 
 ```bash
-python -m src.utils.analyze_confusion \
+python -m src.semantic_role_labeling.utils.analyze_confusion \
 	--model-path artifacts/xlm-roberta-large/baseline/seed120/final_model \
 	--base-model xlm-roberta-large
 ```
@@ -181,7 +263,7 @@ confusion matrices, metrics, token-level predictions, and
 First, select representative examples from the instance-level analysis:
 
 ```bash
-python -m src.utils.select_qualitative_examples \
+python -m src.semantic_role_labeling.utils.select_qualitative_examples \
 	--input artifacts/xlm-roberta-large/baseline/seed120/confusion_analysis/instance_analysis.json \
 	--count 5
 ```
@@ -196,7 +278,7 @@ sentences:
 ### Linguistic inspection dashboard
 
 ```bash
-python -m src.utils.build_qualitative_dashboard
+python -m src.semantic_role_labeling.utils.build_qualitative_dashboard
 ```
 
 By default, the dashboard uses the examples from
@@ -210,7 +292,7 @@ artifacts/qualitative_dashboard/index.html
 You can provide another selection explicitly:
 
 ```bash
-python -m src.utils.build_qualitative_dashboard \
+python -m src.semantic_role_labeling.utils.build_qualitative_dashboard \
 	--input artifacts/<model>/<strategy>/seed<seed>/confusion_analysis/qualitative_examples.json
 ```
 

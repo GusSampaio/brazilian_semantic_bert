@@ -20,9 +20,9 @@ from transformers import (
 from transformers.integrations import MLflowCallback
 
 
-from src.data.srl_data_module import SRLDataModule
-from src.training.metrics import SRLMetrics
-from src.utils.input_reader import define_exp_config
+from src.semantic_role_labeling.data.srl_data_module import SRLDataModule
+from src.semantic_role_labeling.training.metrics import SRLMetrics
+from src.semantic_role_labeling.utils.input_reader import define_exp_config
 
 MLFLOW_EXPERIMENT_NAME = "srl-portuguese"
 EARLY_STOPPING_PATIENCE=10
@@ -233,7 +233,7 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
 
 if __name__ == "__main__":
     model_name, model_size, num_epochs, batch_size, strategy, seed = define_exp_config()
-    cfg_path = f"src/configs/{model_name}.json"
+    cfg_path = f"src/semantic_role_labeling/configs/{model_name}.json"
     cfg = json.load(open(cfg_path))
     cfg = cfg[model_size]
 

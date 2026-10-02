@@ -2,7 +2,10 @@ import torch
 from transformers import AutoModelForTokenClassification, AutoTokenizer
 
 class SRLPredictor:
-    def __init__(self, model_path="artifacts/srl_model_final"):
+    def __init__(self, model_path=None):
+        if model_path is None:
+            print("Nenhum caminho de modelo fornecido. Finalizando.")
+            return
         print(f"A carregar o modelo de '{model_path}'...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         self.model = AutoModelForTokenClassification.from_pretrained(model_path)
@@ -26,8 +29,8 @@ class SRLPredictor:
         # Aqui usamos o split() básico para simplificar.
         words = text.split()
 
-        if predicate_index >= len(words):
-            return "Erro: O índice do predicado é maior do que o número de palavras na frase."
+        if predicate_index >= len(words) or predicate_index < 0:
+            return "Index out of range"
 
         # 1. Inserir os Special Tokens (como faz o instance_builder)
         new_words = []
@@ -79,6 +82,43 @@ class SRLPredictor:
         # 5. Formatar a saída (junta palavras consecutivas com a mesma label)
         return self._format_output(aligned_labels)
 
+    def _predict_without_predicate_info(self, text):
+        words = text.split()
+
+        # Tokenizar para o BERT
+        encoding = self.tokenizer(
+            words,
+            is_split_into_words=True,
+            return_tensors="pt",
+            truncation=True,
+            max_length=128
+        )
+
+        # Fazer o Forward Pass (Inferência)
+        with torch.no_grad():
+            outputs = self.model(**encoding)
+
+        logits = outputs.logits
+        predictions = torch.argmax(logits, dim=2).squeeze().tolist()
+
+        # Alinhar as predições de volta para as palavras originais
+        word_ids = encoding.word_ids()
+        aligned_labels = []
+        previous_word_id = None
+
+        for i, word_id in enumerate(word_ids):
+            if word_id is None:
+                continue
+
+            if word_id != previous_word_id:
+                actual_word = words[word_id]
+                pred_label = self._safe_get_label(predictions[i])
+                aligned_labels.append((actual_word, pred_label))
+
+            previous_word_id = word_id
+
+        return self._format_output(aligned_labels)
+
     def _format_output(self, aligned_labels):
         result = []
         current_label = None
@@ -106,7 +146,7 @@ class SRLPredictor:
         return " ".join(result)
 
 if __name__ == "__main__":
-    predictor = SRLPredictor()
+    predictor = SRLPredictor(model_path="artifacts/xlm-roberta-large/baseline/seed120/final_model/")
 
     print("\n" + "="*50)
     print("Teste de Inferência de SRL")
@@ -116,14 +156,16 @@ if __name__ == "__main__":
     idx_verbo1 = 2 # 0:A, 1:Joana, 2:atirou
     print(f"\nFrase: {frase1}")
     print(f"Verbo: {frase1.split()[idx_verbo1]}")
-    print(f"Resultado: {predictor.predict(frase1, idx_verbo1)}")
+    print(f"Resultado com predicado: {predictor.predict(frase1, idx_verbo1)}")
+    print(f"Resultado sem predicado: {predictor._predict_without_predicate_info(frase1)}")
 
     # Exemplo 2
     frase2 = "Ontem, o ministro anunciou novas medidas econômicas na capital."
-    idx_verbo2 = 4 # 0:Ontem, 1:,, 2:o, 3:ministro, 4:anunciou
+    idx_verbo2 = 3 # 0:Ontem, 1:, 2:o, 3:ministro, 4:anunciou
     print(f"\nFrase: {frase2}")
     print(f"Verbo: {frase2.split()[idx_verbo2]}")
-    print(f"Resultado: {predictor.predict(frase2, idx_verbo2)}")
+    print(f"Resultado com predicado: {predictor.predict(frase2, idx_verbo2)}")
+    print(f"Resultado sem predicado: {predictor._predict_without_predicate_info(frase2)}")
 
     print("\nExperimente!")
     while True:
@@ -132,7 +174,8 @@ if __name__ == "__main__":
             palavras = texto.split()
             for i, p in enumerate(palavras):
                 print(f"[{i}] {p}")
-            
+            print(f"Resultado sem predicado: {predictor._predict_without_predicate_info(texto)}")
+
             idx = int(input("Qual é o índice do verbo? "))
             print(f"\nPredição: {predictor.predict(texto, idx)}")
         except KeyboardInterrupt:
