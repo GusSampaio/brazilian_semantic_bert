@@ -1,6 +1,8 @@
 import json
 import os
 import sys
+from importlib.metadata import version
+
 import torch.distributed as dist
 os.environ["HF_HOME"] = "/app/.hf_cache"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -14,6 +16,7 @@ from transformers import (
     DataCollatorForTokenClassification,
     EarlyStoppingCallback,
 )
+from transformers.integrations import MLflowCallback
 
 from src.semantic_role_labeling.data.srl_data_module import SRLDataModule
 from src.semantic_role_labeling.training.callbacks import TextLoggerCallback
@@ -25,6 +28,10 @@ EXPERIMENT_NAME = "srl-portuguese"
 EARLY_STOPPING_PATIENCE = 10
 SPECIALIST_STRATEGY = "specialists_ensemble"
 SPECIALIST_LOSS_STRATEGY = "baseline"
+MODEL_PIP_REQUIREMENTS = [
+    f"{package}=={version(package)}"
+    for package in ("mlflow", "torch", "transformers", "tokenizers", "safetensors")
+]
 
 
 def load_specialist_labels(component):
@@ -78,12 +85,10 @@ def main(model_name, num_epochs, batch_size, component, strategy=SPECIALIST_STRA
             "artifacts remain separate from single-model experiments."
         )
 
-    mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
-    mlflow.set_experiment(EXPERIMENT_NAME)
-
     output_path = f"artifacts/{model_name.split('/')[-1]}/{strategy}/seed{seed}"
     run_base_name = f"{model_name.split('/')[-1]}_{strategy}_seed{seed}"
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    run_name = f"{run_base_name}_{component}"
+    is_main_process = int(os.environ.get("RANK", "0")) == 0
     log_file_path = f"{output_path}/training_logs_{component}.txt"
 
     data_module = SRLDataModule(
@@ -109,7 +114,7 @@ def main(model_name, num_epochs, batch_size, component, strategy=SPECIALIST_STRA
 
     training_args = TrainingArguments(
         output_dir=f"{output_path}/checkpoints_{component}",
-        run_name=f"{run_base_name}_{component}",
+        run_name=run_name,
         ddp_find_unused_parameters=False,
         eval_strategy="epoch",
         save_strategy="epoch",
@@ -130,6 +135,13 @@ def main(model_name, num_epochs, batch_size, component, strategy=SPECIALIST_STRA
         data_seed=seed,
     )
 
+    callbacks = [
+        EarlyStoppingCallback(early_stopping_patience=early_stopping_patience)
+    ]
+    if is_main_process:
+        callbacks.append(TextLoggerCallback(log_file_path))
+        callbacks.append(MLflowCallback())
+
     trainer = SRLTrainer(
         model=model,
         args=training_args,
@@ -139,51 +151,52 @@ def main(model_name, num_epochs, batch_size, component, strategy=SPECIALIST_STRA
         processing_class=data_module.tokenizer.tokenizer,
         data_collator=data_collator,
         compute_metrics=metrics_calculator.compute_metrics,
-        callbacks=[
-            TextLoggerCallback(log_file_path),
-            EarlyStoppingCallback(early_stopping_patience=early_stopping_patience),
-        ]
+        callbacks=callbacks,
     )
 
-    print(f"Training {component} model...")
-    trainer.train()
-    trainer.save_model(f"{output_path}/model_{component}")
-
-    metrics_calculator.eval_mode = True
-    val_metrics = trainer.evaluate(ds_val, metric_key_prefix="best_val")
-    test_metrics = trainer.evaluate(ds_test, metric_key_prefix="test")
-
-    if local_rank == 0:
-        mlflow.start_run(run_name=f"{run_base_name}_{component}")
+    mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
+    mlflow.set_experiment(EXPERIMENT_NAME)
+    if is_main_process:
+        print(f"Starting run: {run_name}")
+        mlflow.start_run(run_name=run_name)
         mlflow.set_tags({"component": component, "strategy": strategy})
-        mlflow.log_params({
-            "model_name": model_name, "strategy": strategy,
-            "loss_strategy": SPECIALIST_LOSS_STRATEGY, "seed": seed,
-            "batch_size": batch_size, "num_epochs_ceiling": num_epochs,
-            "early_stopping_patience": early_stopping_patience,
-        })
-        final_metrics = {**val_metrics, **test_metrics}
-        mlflow.log_metrics({
-            key: value
-            for key, value in final_metrics.items()
-            if isinstance(value, (int, float))
-        })
 
-        metrics_path = f"{output_path}/final_metrics_{component}.json"
-        with open(metrics_path, "w", encoding="utf-8") as metrics_file:
-            json.dump(final_metrics, metrics_file, indent=4, ensure_ascii=False)
+    try:
+        print(f"Training {component} model...")
+        trainer.train()
 
-        mlflow.log_artifact(log_file_path)
-        mlflow.log_artifact(metrics_path)
-        mlflow.end_run()
+        final_model_dir = f"{output_path}/model_{component}"
+        trainer.save_model(final_model_dir)
+        print(f"Saved {component} model at {final_model_dir}")
 
-        print(f"Saved {component} model at {output_path}/model_{component}")
-        print(f"Test metrics ({component}): {test_metrics}")
+        trainer.pop_callback(EarlyStoppingCallback)
+        metrics_calculator.eval_mode = True
+        val_metrics = trainer.evaluate(ds_val, metric_key_prefix="best_val")
+        test_metrics = trainer.evaluate(ds_test, metric_key_prefix="test")
 
-    if dist.is_initialized():
-        dist.barrier()
-        dist.destroy_process_group()
+        if is_main_process and mlflow.active_run():
+            final_metrics = {**val_metrics, **test_metrics}
+            metrics_path = f"{output_path}/final_metrics_{component}.json"
+            with open(metrics_path, "w", encoding="utf-8") as metrics_file:
+                json.dump(final_metrics, metrics_file, indent=4, ensure_ascii=False)
 
+            mlflow.log_artifact(log_file_path)
+            mlflow.log_artifact(metrics_path)
+            mlflow.transformers.log_model(
+                transformers_model={
+                    "model": trainer.model,
+                    "tokenizer": data_module.tokenizer.tokenizer,
+                },
+                name="model",
+                pip_requirements=MODEL_PIP_REQUIREMENTS,
+            )
+            print(f"Test metrics ({component}): {test_metrics}")
+    finally:
+        if is_main_process and mlflow.active_run():
+            mlflow.end_run()
+        if dist.is_initialized():
+            dist.barrier()
+            dist.destroy_process_group()
 
 if __name__ == "__main__":
     model_name, model_size, num_epochs, batch_size, strategy, seed = define_exp_config()
