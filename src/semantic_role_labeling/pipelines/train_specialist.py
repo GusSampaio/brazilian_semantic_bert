@@ -8,97 +8,23 @@ os.environ.setdefault("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
 
 import mlflow
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from transformers import (
     AutoModelForTokenClassification,
     TrainingArguments,
-    Trainer,
     DataCollatorForTokenClassification,
-    TrainerCallback,
     EarlyStoppingCallback,
 )
 
 from src.semantic_role_labeling.data.srl_data_module import SRLDataModule
+from src.semantic_role_labeling.training.callbacks import TextLoggerCallback
 from src.semantic_role_labeling.training.metrics import SRLMetrics
+from src.semantic_role_labeling.training.trainer import SRLTrainer
 from src.semantic_role_labeling.utils.input_reader import define_exp_config
 
 EXPERIMENT_NAME = "srl-portuguese"
 EARLY_STOPPING_PATIENCE = 10
-FOCAL_GAMMA = 2.0
 SPECIALIST_STRATEGY = "specialists_ensemble"
 SPECIALIST_LOSS_STRATEGY = "baseline"
-
-
-class TextLoggerCallback(TrainerCallback):
-    def __init__(self, log_path):
-        self.log_path = log_path
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        with open(self.log_path, "w", encoding="utf-8") as f:
-            f.write("TRAINING LOGS\n")
-
-    def on_log(self, args, state, control, logs=None, **kwargs):
-        if logs:
-            with open(self.log_path, "a", encoding="utf-8") as f:
-                prefix = f"[Epoch {state.epoch:.2f} / Step {state.global_step}] "
-                metrics = " | ".join([f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}" for k, v in logs.items()])
-                f.write(prefix + metrics + "\n")
-
-
-class FocalLoss(nn.Module):
-    def __init__(self, gamma=2.0, ignore_index=-100):
-        super().__init__()
-        self.gamma = gamma
-        self.ignore_index = ignore_index
-
-    def forward(self, logits, targets):
-        num_classes = logits.size(-1)
-        logits = logits.view(-1, num_classes)
-        targets = targets.view(-1)
-
-        valid_mask = targets != self.ignore_index
-        logits = logits[valid_mask]
-        targets = targets[valid_mask]
-
-        if len(targets) == 0:
-            return torch.tensor(0.0, device=logits.device, requires_grad=True)
-
-        log_pt = F.log_softmax(logits.float(), dim=-1)
-        log_pt = log_pt.gather(1, targets.unsqueeze(1)).squeeze(1)
-        pt = log_pt.exp().clamp(max=1.0)
-
-        focal_term = (1 - pt).clamp_min(0.0).pow(self.gamma)
-        loss = -focal_term * log_pt
-
-        return loss.mean()
-
-
-class TokenCrossEntropyLoss(nn.CrossEntropyLoss):
-    def forward(self, logits, targets):
-        num_classes = logits.size(-1)
-        return super().forward(
-            logits.view(-1, num_classes),
-            targets.view(-1),
-        )
-
-
-class CustomLossTrainer(Trainer):
-    def __init__(self, *args, loss_strategy="baseline", **kwargs):
-        super().__init__(*args, **kwargs)
-        self.loss_fct = (
-            FocalLoss(gamma=FOCAL_GAMMA, ignore_index=-100)
-            if loss_strategy == "focal_loss"
-            else TokenCrossEntropyLoss(ignore_index=-100)
-        )
-
-    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-        labels = inputs.get("labels")
-        outputs = model(**inputs)
-        logits = outputs.get("logits")
-
-        loss = self.loss_fct(logits, labels)
-
-        return (loss, outputs) if return_outputs else loss
 
 
 def load_specialist_labels(component):
@@ -204,7 +130,7 @@ def main(model_name, num_epochs, batch_size, component, strategy=SPECIALIST_STRA
         data_seed=seed,
     )
 
-    trainer = CustomLossTrainer(
+    trainer = SRLTrainer(
         model=model,
         args=training_args,
         loss_strategy=SPECIALIST_LOSS_STRATEGY,
