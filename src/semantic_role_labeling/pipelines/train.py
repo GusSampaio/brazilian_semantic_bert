@@ -1,5 +1,7 @@
 import json
 import os
+from importlib.metadata import version
+
 import torch.distributed as dist
 os.environ["HF_HOME"] = "/app/.hf_cache"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -19,7 +21,6 @@ from transformers import (
 )
 from transformers.integrations import MLflowCallback
 
-
 from src.semantic_role_labeling.data.srl_data_module import SRLDataModule
 from src.semantic_role_labeling.training.metrics import SRLMetrics
 from src.semantic_role_labeling.utils.input_reader import define_exp_config
@@ -27,6 +28,10 @@ from src.semantic_role_labeling.utils.input_reader import define_exp_config
 MLFLOW_EXPERIMENT_NAME = "srl-portuguese"
 EARLY_STOPPING_PATIENCE=10
 FOCAL_GAMMA = 2.0
+MODEL_PIP_REQUIREMENTS = [
+    f"{package}=={version(package)}"
+    for package in ("mlflow", "torch", "transformers", "tokenizers", "safetensors")
+]
 
 class TextLoggerCallback(TrainerCallback):
     def __init__(self, log_path):
@@ -112,13 +117,10 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
             "Single-model training strategy must be 'baseline' or 'focal_loss'."
         )
 
-    mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
-    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
-
-    output_path = f"artifacts/{model_name.split('/')[-1]}/{strategy}/seed{seed}"
+    model_slug = model_name.split("/")[-1]
+    output_path = f"artifacts/{model_slug}/{strategy}/seed{seed}"
     log_file_path = f"{output_path}/training_logs.txt"
-    run_name = f"{model_name.split('/')[-1]}_{strategy}_seed{seed}"
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    run_name = f"{model_slug}_{strategy}_seed{seed}"
 
     data_module = SRLDataModule(
         raw_dataset_path="data/raw/PBP-classic-complete.conllu",
@@ -144,8 +146,6 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
         padding=True # dynamic padding 
     )
 
-    metrics_calculator = SRLMetrics(id2label=data_module.id2label)
-    
     training_args = TrainingArguments(
         ddp_find_unused_parameters=False, # Avoids errors with DDP when using multiple GPUs
         run_name=run_name,
@@ -153,8 +153,8 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
         output_dir=f"{output_path}/checkpoints",
         eval_strategy="epoch",
         save_strategy="epoch",
-
         save_total_limit=1,
+
         load_best_model_at_end=True,
         metric_for_best_model="f1",
         greater_is_better=True,
@@ -174,8 +174,15 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
         data_seed=seed,
     )
 
-    if local_rank == 0:
-        mlflow.start_run(run_name=run_name)
+    metrics_calculator = SRLMetrics(id2label=data_module.id2label)
+    
+    callbacks = [EarlyStoppingCallback(early_stopping_patience=early_stopping_patience)]
+
+    is_main_process = int(os.environ.get("RANK","0")) == 0
+
+    if is_main_process:
+        callbacks.append(TextLoggerCallback(log_file_path))
+        callbacks.append(MLflowCallback())
 
     trainer = CustomLossTrainer(
         model=model,
@@ -186,16 +193,22 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
         processing_class=data_module.tokenizer.tokenizer,
         data_collator=data_collator,
         compute_metrics=metrics_calculator.compute_metrics, 
-        callbacks=[TextLoggerCallback(log_file_path), 
-                    EarlyStoppingCallback(early_stopping_patience=early_stopping_patience),
-                    MLflowCallback()]
+        callbacks= callbacks
     )
 
-    print("Starting training...")
+    mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+    
+    if is_main_process:
+        print(f"Starting run: {run_name}")
+        mlflow.start_run(run_name=run_name)
+
+
     trainer.train()
 
-    trainer.save_model(f"{output_path}/final_model")
-    print(f"End of training! Saved at {output_path}/final_model")
+    final_model_dir = f"{output_path}/final_model"
+    trainer.save_model(final_model_dir)
+    print(f"End of training! Saved at {final_model_dir}")
 
     trainer.pop_callback(EarlyStoppingCallback)
 
@@ -203,8 +216,7 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
     val_metrics = trainer.evaluate(validation_dataset, metric_key_prefix="best_val")
     test_metrics = trainer.evaluate(test_dataset, metric_key_prefix="test")
     
-    # Registering metrics and artifacts in MLflow only if this is the main process (local_rank == 0)
-    if local_rank == 0:
+    if is_main_process:
         active_run = mlflow.active_run()
         if active_run:
             mlflow.log_params({
@@ -213,7 +225,6 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
                 "early_stopping_patience": early_stopping_patience,
             })
 
-            # Salva arquivos locais
             metrics_path = f"{output_path}/final_metrics.json"
             with open(metrics_path, "w", encoding="utf-8") as f:
                 json.dump({**val_metrics, **test_metrics}, f, indent=4)
@@ -221,6 +232,15 @@ def main(model_name, num_epochs, batch_size, strategy="baseline", seed=42, early
 
             mlflow.log_artifact(log_file_path)
             mlflow.log_artifact(metrics_path)
+
+            mlflow.transformers.log_model(
+                transformers_model={
+                    "model": trainer.model,
+                    "tokenizer": data_module.tokenizer.tokenizer,
+                },
+                name="model",
+                pip_requirements=MODEL_PIP_REQUIREMENTS,
+            )
 
             mlflow.end_run()
 
